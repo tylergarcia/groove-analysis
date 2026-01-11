@@ -1,0 +1,12 @@
+{
+  "tempo_bpm": 120.0,
+  "grid_subdivision": 16,
+  "grid_interval_ms": 125.0,
+  "num_hits": 128,
+  "deviation_stats": {
+    "mean_ms": 15.460991792940437,
+    "std_ms": 15.860347399629749,
+    "min_ms": -6.549362760224361,
+    "max_ms": 37.40810528121322
+  }
+}

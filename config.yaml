@@ -1,0 +1,59 @@
+# Groove Analyzer Configuration
+# ==============================
+
+onset_detection:
+  # Hop length for onset detection (samples)
+  # Lower = higher temporal resolution but more computation
+  # 256 @ 44100 Hz = ~5.8ms resolution
+  hop_length: 256
+
+  # Minimum onset strength to detect (0-1)
+  # Lower = more sensitive, may detect noise
+  # Higher = fewer false positives, may miss soft hits
+  onset_threshold: 0.1
+
+quantization:
+  # Grid subdivision per beat
+  # 4 = quarter notes, 8 = 8th notes, 16 = 16th notes
+  grid_subdivision: 16
+
+  # Amplitude normalization method
+  # 'minmax' = scale to [0, 1]
+  # 'zscore' = standardize to mean=0, std=1
+  amplitude_normalization: minmax
+
+analysis:
+  # Run Principal Component Analysis
+  run_pca: true
+
+  # Run clustering analysis
+  run_clustering: true
+
+  # Numbers of clusters to try
+  n_clusters: [3, 4, 5]
+
+  # Run statistical significance tests
+  run_significance: true
+
+  # Number of permutations for significance tests
+  n_permutations: 1000
+
+visualization:
+  # Output formats for figures
+  output_formats: [png, svg]
+
+  # Figure DPI for raster formats
+  figure_dpi: 300
+
+  # Use colorblind-safe palettes
+  colorblind_safe: true
+
+  # Default colormap for sequential data
+  colormap: viridis
+
+output:
+  # Save intermediate data files
+  save_intermediate: true
+
+  # Export formats for data
+  export_formats: [csv, json, hdf5]
