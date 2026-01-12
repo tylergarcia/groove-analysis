@@ -85,7 +85,7 @@ class GrooveVisualizer:
         self,
         ax: Optional[plt.Axes] = None,
         color_by: Literal['chronological', 'density', 'amplitude'] = 'chronological',
-        show_marginals: bool = True,
+        show_marginals: bool = False,
         show_ellipse: bool = True,
         show_correlation: bool = True,
         figsize: tuple = (8, 8),

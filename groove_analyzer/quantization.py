@@ -24,13 +24,18 @@ class QuantizationResult:
 
     grid_positions: np.ndarray  # Nearest grid position index for each onset
     actual_times: np.ndarray  # Original onset times in seconds
-    deviations_ms: np.ndarray  # Timing deviation in milliseconds
-    deviations_normalized: np.ndarray  # Deviation as fraction of grid interval
+    deviations_ms: np.ndarray  # Timing deviation in milliseconds (raw)
+    deviations_normalized: np.ndarray  # Deviation as fraction of grid interval (raw)
     amplitudes_raw: np.ndarray  # Original amplitude values
     amplitudes_normalized: np.ndarray  # Normalized 0-1
     tempo_bpm: float
     grid_subdivision: int
     grid_interval_ms: float  # Time between grid positions in ms
+
+    # Global offset correction
+    global_offset_ms: float = 0.0  # Median deviation (constant shift)
+    deviations_corrected_ms: np.ndarray = field(default_factory=lambda: np.array([]))
+    deviations_corrected_normalized: np.ndarray = field(default_factory=lambda: np.array([]))
 
     def __len__(self) -> int:
         return len(self.actual_times)
@@ -48,7 +53,9 @@ class QuantizationResult:
             'grid_time_s': self.grid_times,
             'actual_time_s': self.actual_times,
             'deviation_ms': self.deviations_ms,
+            'deviation_corrected_ms': self.deviations_corrected_ms,
             'deviation_normalized': self.deviations_normalized,
+            'deviation_corrected_normalized': self.deviations_corrected_normalized,
             'amplitude_raw': self.amplitudes_raw,
             'amplitude_normalized': self.amplitudes_normalized,
         })
@@ -62,11 +69,18 @@ class QuantizationResult:
             'grid_subdivision': self.grid_subdivision,
             'grid_interval_ms': self.grid_interval_ms,
             'num_hits': len(self),
-            'deviation_stats': {
+            'global_offset_ms': self.global_offset_ms,
+            'deviation_stats_raw': {
                 'mean_ms': float(np.mean(self.deviations_ms)),
                 'std_ms': float(np.std(self.deviations_ms)),
                 'min_ms': float(np.min(self.deviations_ms)),
                 'max_ms': float(np.max(self.deviations_ms)),
+            },
+            'deviation_stats_corrected': {
+                'mean_ms': float(np.mean(self.deviations_corrected_ms)),
+                'std_ms': float(np.std(self.deviations_corrected_ms)),
+                'min_ms': float(np.min(self.deviations_corrected_ms)),
+                'max_ms': float(np.max(self.deviations_corrected_ms)),
             }
         }
         with open(path, 'w') as f:
@@ -155,6 +169,17 @@ class GridQuantizer:
         # Normalize deviations as fraction of grid interval (-0.5 to +0.5)
         deviations_normalized = deviations_s / self.grid_interval_s
 
+        # Compute global offset correction using median (robust to outliers)
+        global_offset_ms = float(np.median(deviations_ms))
+        deviations_corrected_ms = deviations_ms - global_offset_ms
+        deviations_corrected_normalized = deviations_corrected_ms / self.grid_interval_ms
+
+        logger.info(
+            f"Global offset: {global_offset_ms:.2f}ms "
+            f"(raw std: {np.std(deviations_ms):.2f}ms, "
+            f"corrected std: {np.std(deviations_corrected_ms):.2f}ms)"
+        )
+
         # Normalize amplitudes
         amplitudes_normalized = self._normalize_amplitudes(
             onset_amplitudes, method=amplitude_norm
@@ -173,6 +198,9 @@ class GridQuantizer:
             tempo_bpm=self.tempo_bpm,
             grid_subdivision=self.grid_subdivision,
             grid_interval_ms=self.grid_interval_ms,
+            global_offset_ms=global_offset_ms,
+            deviations_corrected_ms=deviations_corrected_ms,
+            deviations_corrected_normalized=deviations_corrected_normalized,
         )
 
     def _normalize_amplitudes(

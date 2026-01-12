@@ -188,12 +188,16 @@ Examples:
         logger.info(f"Analyzing {args.input}...")
         analyzer = GrooveAnalyzer(config=config, output_dir=args.output)
         results = analyzer.analyze_audio(args.input, tempo_bpm=args.tempo)
-        _print_summary(results)
+        _print_summary(results, analyzer.quant_result)
 
 
-def _print_summary(results):
+def _print_summary(results, quant_result=None):
     """Print a summary of analysis results."""
     stats = results.statistics
+
+    # Detection noise floor (empirically determined from Logic metronome click at exact 128 BPM)
+    # Based on interval std, not grid deviation (immune to tempo mismatch)
+    NOISE_FLOOR_MS = 0.02
 
     print("\n" + "="*60)
     print("ANALYSIS SUMMARY")
@@ -201,11 +205,47 @@ def _print_summary(results):
 
     print(f"\nTotal hits analyzed: {stats['n_hits']}")
 
-    print("\nTiming Deviations:")
-    t = stats['timing']
-    print(f"  Mean: {t['mean']:.4f} (normalized)")
-    print(f"  Std:  {t['std']:.4f}")
-    print(f"  Range: [{t['min']:.4f}, {t['max']:.4f}]")
+    # Show global offset correction and tempo-relative stats if available
+    if quant_result is not None:
+        tempo = quant_result.tempo_bpm
+        quarter_note_ms = 60000 / tempo  # ms per quarter note
+
+        print(f"\nGlobal Offset: {quant_result.global_offset_ms:.2f}ms")
+
+        # Calculate timing stats in ms and as % of quarter note
+        std_ms = quant_result.deviations_corrected_ms.std()
+        std_pct = (std_ms / quarter_note_ms) * 100
+
+        # Estimate "true" groove variation by subtracting noise floor (in quadrature)
+        if std_ms > NOISE_FLOOR_MS:
+            true_std_ms = (std_ms**2 - NOISE_FLOOR_MS**2)**0.5
+        else:
+            true_std_ms = 0.0
+        true_std_pct = (true_std_ms / quarter_note_ms) * 100
+
+        # Interval-based analysis (immune to tempo mismatch)
+        import numpy as np
+        intervals_ms = np.diff(quant_result.actual_times) * 1000
+        interval_std_ms = intervals_ms.std() if len(intervals_ms) > 1 else 0
+        interval_std_pct = (interval_std_ms / quarter_note_ms) * 100
+
+        # Estimate true groove from intervals
+        if interval_std_ms > NOISE_FLOOR_MS:
+            true_interval_std = (interval_std_ms**2 - NOISE_FLOOR_MS**2)**0.5
+        else:
+            true_interval_std = 0.0
+        true_interval_pct = (true_interval_std / quarter_note_ms) * 100
+
+        print(f"\nTiming Variation (interval-based):")
+        print(f"  Interval std:   {interval_std_ms:.2f}ms ({interval_std_pct:.2f}% of quarter note)")
+        print(f"  Noise floor:    {NOISE_FLOOR_MS:.2f}ms (detection precision)")
+        print(f"  True groove:    {true_interval_std:.2f}ms ({true_interval_pct:.2f}% of quarter note)")
+    else:
+        print("\nTiming Deviations (offset-corrected):")
+        t = stats['timing']
+        print(f"  Mean: {t['mean']:.4f} (normalized)")
+        print(f"  Std:  {t['std']:.4f}")
+        print(f"  Range: [{t['min']:.4f}, {t['max']:.4f}]")
 
     print("\nAmplitude:")
     a = stats['amplitude']

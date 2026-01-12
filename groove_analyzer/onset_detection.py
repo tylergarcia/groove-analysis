@@ -59,24 +59,31 @@ class OnsetDetector:
 
     Parameters
     ----------
-    hop_length : int, default=256
+    hop_length : int, default=64
         Analysis hop size in samples (affects temporal resolution).
-        256 @ 44100 Hz = ~5.8ms resolution
+        64 @ 44100 Hz = ~1.45ms resolution
     onset_threshold : float, default=0.1
         Minimum onset strength (normalized 0-1) to consider as hit
-    backtrack : bool, default=True
-        Whether to backtrack onset times to local energy minimum
+    backtrack : bool, default=False
+        Whether to backtrack onset times to local energy minimum.
+        Note: backtracking can cause issues with threshold filtering
+        since backtracked positions may have low envelope values.
+    refine_onsets : bool, default=True
+        Whether to refine onset times to sample-level precision by
+        finding the exact point where waveform exceeds threshold.
     """
 
     def __init__(
         self,
-        hop_length: int = 256,
+        hop_length: int = 64,
         onset_threshold: float = 0.1,
-        backtrack: bool = True,
+        backtrack: bool = False,
+        refine_onsets: bool = True,
     ):
         self.hop_length = hop_length
         self.onset_threshold = onset_threshold
         self.backtrack = backtrack
+        self.refine_onsets = refine_onsets
 
     def detect_onsets(
         self,
@@ -142,6 +149,10 @@ class OnsetDetector:
         onset_frames = onset_frames[mask]
         onset_strengths = onset_strengths[mask]
 
+        # Refine onset times to sample-level precision
+        if self.refine_onsets and len(onset_times) > 0:
+            onset_times = self._refine_onset_times(y, onset_times, sr)
+
         # Calculate amplitude at each onset using RMS in a window around onset
         onset_amplitudes = self._calculate_onset_amplitudes(
             y, onset_times, sr, window_ms=20
@@ -164,10 +175,72 @@ class OnsetDetector:
                 'hop_length': self.hop_length,
                 'onset_threshold': self.onset_threshold,
                 'backtrack': self.backtrack,
+                'refine_onsets': self.refine_onsets,
                 'duration_s': duration,
                 'num_onsets': len(onset_times),
             }
         )
+
+    def _refine_onset_times(
+        self,
+        y: np.ndarray,
+        onset_times: np.ndarray,
+        sr: int,
+        search_window_ms: float = 10,
+        method: str = 'peak',
+    ) -> np.ndarray:
+        """
+        Refine onset times to sample-level precision.
+
+        Parameters
+        ----------
+        y : np.ndarray
+            Audio waveform
+        onset_times : np.ndarray
+            Initial onset times in seconds
+        sr : int
+            Sample rate
+        search_window_ms : float
+            Window to search around each onset (ms)
+        method : str
+            'peak' - find the maximum amplitude (most consistent)
+            'threshold' - find first sample above 10% of peak
+
+        Returns
+        -------
+        np.ndarray
+            Refined onset times in seconds
+        """
+        search_samples = int(sr * search_window_ms / 1000)
+        refined_times = np.zeros_like(onset_times)
+
+        for i, t in enumerate(onset_times):
+            center_sample = int(t * sr)
+            start = max(0, center_sample - search_samples)
+            end = min(len(y), center_sample + search_samples)
+
+            # Get the window
+            window = np.abs(y[start:end])
+            if len(window) == 0:
+                refined_times[i] = t
+                continue
+
+            if method == 'peak':
+                # Find the peak - most consistent reference point
+                peak_idx = np.argmax(window)
+                refined_sample = start + peak_idx
+            else:  # threshold
+                peak_val = window.max()
+                threshold = peak_val * 0.1
+                above_thresh = np.where(window > threshold)[0]
+                if len(above_thresh) > 0:
+                    refined_sample = start + above_thresh[0]
+                else:
+                    refined_sample = center_sample
+
+            refined_times[i] = refined_sample / sr
+
+        return refined_times
 
     def _calculate_onset_amplitudes(
         self,

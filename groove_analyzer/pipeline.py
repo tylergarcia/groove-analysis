@@ -235,10 +235,10 @@ class GrooveAnalyzer:
     def _run_analysis_pipeline(self) -> AnalysisResults:
         """Run analysis from quantized data onwards."""
 
-        # 3. Create vector representations
+        # 3. Create vector representations (using offset-corrected deviations)
         vectorizer = GrooveVectorizer(normalize_deviation=True)
         self.representations = vectorizer.create_representations(
-            deviations=self.quant_result.deviations_normalized,
+            deviations=self.quant_result.deviations_corrected_normalized,
             amplitudes=self.quant_result.amplitudes_normalized,
             grid_interval_ms=self.quant_result.grid_interval_ms,
             grid_positions=self.quant_result.grid_positions,
