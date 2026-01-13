@@ -15,6 +15,7 @@ from typing import Optional
 import librosa
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy import signal
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ class OnsetDetector:
     refine_onsets : bool, default=True
         Whether to refine onset times to sample-level precision by
         finding the exact point where waveform exceeds threshold.
+    highpass_freq : float, optional
+        High-pass filter cutoff frequency in Hz. If set, audio is filtered
+        before onset detection. Use ~600Hz to isolate hi-hat/cymbals from kick.
     """
 
     def __init__(
@@ -79,11 +83,13 @@ class OnsetDetector:
         onset_threshold: float = 0.1,
         backtrack: bool = False,
         refine_onsets: bool = True,
+        highpass_freq: Optional[float] = None,
     ):
         self.hop_length = hop_length
         self.onset_threshold = onset_threshold
         self.backtrack = backtrack
         self.refine_onsets = refine_onsets
+        self.highpass_freq = highpass_freq
 
     def detect_onsets(
         self,
@@ -112,6 +118,15 @@ class OnsetDetector:
         y, sr = librosa.load(audio_path, sr=sr, mono=True)
         duration = len(y) / sr
         logger.info(f"Loaded {duration:.2f}s of audio at {sr} Hz")
+
+        # Apply high-pass filter if specified
+        if self.highpass_freq is not None:
+            nyquist = sr / 2
+            normalized_cutoff = self.highpass_freq / nyquist
+            if normalized_cutoff < 1:
+                b, a = signal.butter(4, normalized_cutoff, btype='high')
+                y = signal.filtfilt(b, a, y)
+                logger.info(f"Applied {self.highpass_freq}Hz high-pass filter")
 
         # Compute onset envelope (optimized for percussion)
         onset_env = librosa.onset.onset_strength(
@@ -176,6 +191,7 @@ class OnsetDetector:
                 'onset_threshold': self.onset_threshold,
                 'backtrack': self.backtrack,
                 'refine_onsets': self.refine_onsets,
+                'highpass_freq': self.highpass_freq,
                 'duration_s': duration,
                 'num_onsets': len(onset_times),
             }

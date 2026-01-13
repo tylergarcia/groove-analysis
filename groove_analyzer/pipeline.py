@@ -31,8 +31,9 @@ class PipelineConfig:
     """Configuration for the analysis pipeline."""
 
     # Onset detection
-    hop_length: int = 256
+    hop_length: int = 64
     onset_threshold: float = 0.1
+    highpass_freq: Optional[float] = None  # Hz, for isolating hi-hat from kick
 
     # Quantization
     tempo_bpm: float = 120.0
@@ -148,6 +149,7 @@ class GrooveAnalyzer:
         detector = OnsetDetector(
             hop_length=self.config.hop_length,
             onset_threshold=self.config.onset_threshold,
+            highpass_freq=self.config.highpass_freq,
         )
         self.onset_result = detector.detect_onsets(audio_path)
 

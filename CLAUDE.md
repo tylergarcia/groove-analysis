@@ -8,793 +8,269 @@ This project implements a novel mathematical framework for analyzing drum groove
 
 **Novel Contribution**: No prior research has represented drum hits as (Δt, velocity) vectors and analyzed them using vector/matrix mathematics and geometric visualization. Existing work analyzes timing and amplitude separately or only measures their correlation.
 
-## Academic Requirements
+---
 
-### Reproducibility
-- All parameters (tempo, grid resolution, onset detection settings) must be explicitly recorded
-- Random seeds must be set for any stochastic processes
-- Complete data provenance from WAV file to final visualizations
-- Export all intermediate data in standard formats (CSV, JSON, HDF5)
+## Current Implementation Status
 
-### Validation
-- Onset detection results must be visually verifiable against waveform
-- Manual annotation capability for ground truth comparison
-- Statistical significance testing for detected patterns
-- Comparison against synthetic/quantized control data
+### What's Built and Working
 
-### Documentation
-- Methodology documentation for each analysis step
-- Parameter sensitivity analysis
-- Limitations and assumptions clearly stated
-- Publication-ready figure generation (vector graphics, proper labeling)
+1. **Onset Detection** (`groove_analyzer/onset_detection.py`)
+   - Librosa-based detection with 0.02ms precision (validated against Logic metronome)
+   - Hop length: 64 samples (1.45ms frame resolution)
+   - Sample-level peak refinement for sub-frame accuracy
+   - High-pass filter option (`--highpass 600`) to isolate hi-hat from kick
+   - See `onset-detect.md` for full methodology
 
-## System Architecture
+2. **Quantization** (`groove_analyzer/quantization.py`)
+   - Grid alignment to nearest 16th note
+   - **Global offset correction**: subtracts median deviation to handle recordings that don't start on beat 1
+   - Outputs both raw and corrected deviations
+   - Interval-based analysis (immune to tempo mismatch)
 
-### Design Principles
-1. **Modularity**: Separate data extraction, transformation, analysis, and visualization
-2. **Extensibility**: Easy to add new visualizations and analysis methods
-3. **Data-first**: All transformations preserve raw data for alternative analyses
-4. **Batch processing**: Analyze multiple files consistently
-5. **Interactive exploration**: Support both scripted and interactive workflows
+3. **Analysis Pipeline** (`groove_analyzer/pipeline.py`)
+   - Full pipeline from WAV → visualizations
+   - Statistics, PCA, clustering, autocorrelation, swing detection
+   - Significance testing via permutation tests
 
-### Core Components
+4. **CLI** (`analyze_groove.py`)
+   ```bash
+   python analyze_groove.py -i song.wav -t 120 -o results/my_analysis/
+   python analyze_groove.py -i song.wav -t 120 --highpass 600  # isolate hi-hat
+   ```
 
+### Key Findings So Far
+
+| Source | Interval Std | True Groove |
+|--------|-------------|-------------|
+| Logic metronome (control) | 0.02ms | 0.00% |
+| Quantized MIDI hi-hat | 0.76ms | 0.16% (sample attack variation) |
+| Logic humanized hi-hat | 4.06ms | 0.87% |
+| James Brown 1-bar loop | 4.69ms | ~1.0% |
+
+- Detection precision is **0.02ms** — well below human perception (~5ms)
+- Different samples have inherent attack variation (~0.76ms for hi-hat)
+- Real recordings show ~1% of quarter note timing variation
+- Negative timing-amplitude correlation (loud=early) appears in funk (JB: r=-0.28)
+
+---
+
+## Mathematical Framework: The Search for Groove Structure
+
+### The Core Representation
+
+Each drum hit is a 2D vector:
 ```
-┌─────────────────┐
-│  WAV File(s)    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────┐
-│  1. Onset Detection Module  │
-│  - librosa/madmom backends  │
-│  - Configurable parameters  │
-│  - Quality metrics          │
-└────────┬────────────────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│  2. Quantization Module      │
-│  - Grid alignment            │
-│  - Deviation calculation     │
-│  - Amplitude normalization   │
-└────────┬─────────────────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│  3. Vector Representation    │
-│  - (Δt, v) vector matrix     │
-│  - Complex number sequence   │
-│  - Trajectory matrices       │
-│  - Difference/lag matrices   │
-└────────┬─────────────────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│  4. Analysis Module          │
-│  - Statistical measures      │
-│  - Pattern detection         │
-│  - Correlation analysis      │
-│  - Dimensionality reduction  │
-└────────┬─────────────────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│  5. Visualization Engine     │
-│  - 15+ visualization types   │
-│  - Publication-ready output  │
-│  - Interactive exploration   │
-└──────────────────────────────┘
+h_n = (Δt_n, v_n)
+```
+where:
+- Δt_n = timing deviation from grid (normalized by grid interval)
+- v_n = amplitude (normalized 0-1)
+
+A performance is a sequence of these vectors: H = [h_1, h_2, ..., h_N]
+
+### Promising Mathematical Approaches
+
+#### 1. The Groove Operator (Linear Dynamical System)
+
+Model hit evolution as a linear system:
+```
+[Δt_{n+1}]   [a  b] [Δt_n]   [ε]
+[v_{n+1} ] = [c  d] [v_n ] + [η]
 ```
 
-## Implementation Specification
+The 2×2 matrix **A** is the "groove operator". Its properties encode groove character:
 
-### Module 1: Onset Detection Module
+- **Eigenvalues λ₁, λ₂**:
+  - |λ| < 1: stable (self-correcting drummer)
+  - Complex λ: oscillatory (drummer swings around target)
+  - Real λ: exponential (monotonic correction)
 
-**File**: `onset_detection.py`
+- **Eigenvalue equation**:
+  ```
+  λ² - tr(A)λ + det(A) = 0
+  ```
+  This **quadratic** directly characterizes groove dynamics.
 
-**Class**: `OnsetDetector`
+- **Discriminant** Δ = tr(A)² - 4·det(A):
+  - Δ > 0: real eigenvalues, exponential behavior
+  - Δ < 0: complex eigenvalues, oscillatory behavior
+  - Δ = 0: critically damped
 
-```python
-class OnsetDetector:
-    """
-    Extract drum hit timing and amplitude from audio files.
-    
-    Parameters
-    ----------
-    backend : {'librosa', 'madmom', 'essentia'}
-        Onset detection library to use
-    hop_length : int, default=256
-        Analysis hop size in samples (affects temporal resolution)
-    onset_threshold : float, default=0.5
-        Minimum onset strength (normalized 0-1)
-    """
+**Hypothesis**: Different genres/drummers cluster in eigenvalue space. Funk might show complex eigenvalues (bouncy), while metal shows real eigenvalues (rigid).
+
+#### 2. Nonlinear Extension (Polynomial Regression)
+
+Test for nonlinear coupling:
+```
+Δt_{n+1} = a₀ + a₁Δt_n + a₂v_n + a₃Δt_n² + a₄v_n² + a₅(Δt_n·v_n) + ε
 ```
 
-**Methods**:
-- `detect_onsets(audio_path, sr=44100)` → Returns (onset_times, onset_strengths)
-- `visualize_detection(audio_path, onset_times)` → Overlay onsets on waveform
-- `save_detection_report(output_path)` → Export detection metadata
+The **interaction term a₅** captures coupling: does being loud AND late predict something different than either alone?
 
-**Outputs**:
-- `onsets.csv`: timestamp, amplitude, onset_strength_raw, detection_confidence
-- `detection_params.json`: All parameters used
-- `detection_visual.png`: Waveform with onset markers
+If a₃, a₄, a₅ are significant, groove has nonlinear dynamics — the feel depends on where you are in the timing-amplitude space.
 
-**Validation**:
-- Compare detection against manual annotations
-- Report precision/recall metrics
-- Flag suspicious detections (unusually close onsets, weak amplitudes)
+#### 3. Complex Trajectory Analysis
 
-### Module 2: Quantization Module
-
-**File**: `quantization.py`
-
-**Class**: `GridQuantizer`
-
-```python
-class GridQuantizer:
-    """
-    Calculate timing deviations from ideal grid positions.
-    
-    Parameters
-    ----------
-    tempo_bpm : float
-        Known tempo in beats per minute
-    grid_subdivision : int, default=16
-        Grid resolution (4=quarter notes, 8=8th notes, 16=16th notes)
-    normalization : {'ms', 'beat_fraction', 'samples'}
-        Units for timing deviation
-    """
+Represent hits as complex numbers:
+```
+z_n = Δt_n + i·v_n
 ```
 
-**Methods**:
-- `quantize(onset_times, onset_amplitudes)` → Returns deviations, grid_positions
-- `normalize_amplitudes(method='minmax' | 'zscore' | 'midi')` → Scaled 0-1
-- `get_grid_timeline()` → Perfect grid for visualization
-- `calculate_swing_ratio()` → Analyze systematic timing patterns
+The ratio **z_{n+1}/z_n = r·e^{iθ}** encodes:
+- r: scaling (contraction/expansion)
+- θ: rotation in timing-amplitude space
 
-**Outputs**:
-- `quantized.csv`: grid_position, actual_time, deviation_ms, deviation_normalized, amplitude_raw, amplitude_normalized
-- `grid_params.json`: Tempo, subdivision, normalization methods
+If r ≈ 1 and θ ≈ constant, the groove traces a spiral. The mean resultant vector ⟨z⟩ indicates overall tendency.
 
-**Edge Cases**:
-- Tempo drift detection: warn if best-fit tempo differs from specified
-- Pickup notes: handle onsets before first downbeat
-- Missing onsets: identify expected grid positions without hits
+#### 4. Differential Equation Model
 
-### Module 3: Vector Representation Module
-
-**File**: `vector_representation.py`
-
-**Class**: `GrooveVectorizer`
-
-```python
-class GrooveVectorizer:
-    """
-    Transform timing-amplitude data into various mathematical representations.
-    
-    Generates:
-    - Hit vector matrix H = [[Δt₁, v₁], [Δt₂, v₂], ...]
-    - Complex number sequence z_i = v_i * exp(i*2π*Δt_i/T)
-    - Trajectory matrices for phase space analysis
-    - Difference/lag matrices for sequential analysis
-    """
+Treat discrete hits as samples from continuous dynamics:
+```
+dΔt/dt = -αΔt + βv
+dv/dt = γΔt - δv
 ```
 
-**Methods**:
-- `create_hit_matrix(deviations, amplitudes)` → N×2 numpy array
-- `to_complex_sequence(normalize_phase=True)` → Complex numpy array
-- `create_trajectory_matrix(lag=1)` → Phase space representation
-- `create_difference_matrix()` → First differences
-- `reshape_to_bars(beats_per_bar=4)` → 3D array [bars, beats, 2]
+This is a **damped harmonic oscillator** in 2D. Parameters:
+- ω₀ = √(αδ - βγ): natural frequency
+- ζ = (α + δ)/(2ω₀): damping ratio
 
-**Representations Generated**:
+Groove character maps to oscillator behavior:
+- Underdamped (ζ < 1): swinging, bouncy feel
+- Overdamped (ζ > 1): sluggish, behind-the-beat
+- Critical (ζ = 1): tight, snapping to grid
 
-1. **Hit Matrix H**: Direct (Δt, v) pairs
-2. **Complex Sequence Z**: `z_i = v_i * exp(i*2π*Δt_i/beat_period)`
-3. **Trajectory Matrix T**: `[[Δt_n, v_n, Δt_{n+1}, v_{n+1}], ...]`
-4. **Lag-k Matrices**: For autocorrelation analysis
-5. **Bar-structured 3D**: `[num_bars, beats_per_bar, 2]`
+#### 5. Energy Conservation (Hamiltonian)
 
-**Outputs**:
-- `hit_matrix.npy`: Core N×2 matrix
-- `complex_sequence.npy`: Complex number array
-- `representations.h5`: HDF5 with all representations
-- `vector_stats.json`: Basic statistics on each representation
-
-### Module 4: Analysis Module
-
-**File**: `pattern_analysis.py`
-
-**Class**: `PatternAnalyzer`
-
-```python
-class PatternAnalyzer:
-    """
-    Detect and quantify patterns in timing-amplitude vector space.
-    
-    Methods include statistical analysis, correlation structures,
-    dimensionality reduction, and template matching.
-    """
+Define groove "energy":
+```
+E(Δt, v) = ½αΔt² + ½βv² + γΔt·v
 ```
 
-**Analysis Methods**:
+If E is approximately conserved, trajectories follow ellipses in (Δt, v) space. The correlation coefficient ρ determines ellipse orientation.
 
-1. **Statistical Summary**:
-   - Mean, median, std, CV for timing and amplitude separately
-   - Joint statistics: correlation, covariance matrix, eigenvalues
-   - Outlier detection: Mahalanobis distance
+**Departures from conservation** indicate:
+- Energy injection: drummer getting more intense
+- Energy dissipation: settling into pocket
 
-2. **Autocorrelation Analysis**:
-   - `autocorrelation_timing()`: ACF of timing deviations
-   - `autocorrelation_amplitude()`: ACF of amplitude
-   - `cross_correlation_timing_amplitude()`: Relationship between channels
-   - Lag-1 autocorrelation (test for compensatory timing)
+#### 6. Transfer Entropy (Causal Direction)
 
-3. **Dimensionality Reduction**:
-   - PCA on hit matrix: principal modes of variation
-   - t-SNE for visualization of high-dimensional patterns
-   - Factor analysis: latent groove components
-
-4. **Clustering**:
-   - K-means: natural groupings of (Δt, v) hits
-   - DBSCAN: density-based pattern detection
-   - Hierarchical clustering: relationships between hit types
-
-5. **Pattern Matching**:
-   - DTW distance to templates (straight, swing, shuffle)
-   - Correlation with synthetic patterns
-   - Swing ratio calculation and classification
-
-6. **Information Theory**:
-   - Shannon entropy of discretized (Δt, v) space
-   - Mutual information I(Δt; v)
-   - Complexity measures
-
-7. **Geometric Analysis**:
-   - Vector field visualization
-   - Centroid and dispersion
-   - Convex hull of hit cloud
-   - Distance from origin distribution
-
-**Outputs**:
-- `analysis_summary.json`: All computed metrics
-- `pca_components.csv`: Principal component loadings
-- `clusters.csv`: Cluster assignments for each hit
-- `pattern_matches.csv`: DTW distances to templates
-
-### Module 5: Visualization Engine
-
-**File**: `visualization.py`
-
-**Class**: `GrooveVisualizer`
-
-**Design Requirements**:
-- Publication-ready vector graphics (SVG, PDF)
-- Consistent styling across all plots
-- Configurable color schemes for colorblind accessibility
-- Automatic figure sizing for papers/presentations
-- Annotations with statistical significance markers
-
-**Visualization Types** (15+ implementations):
-
-#### 1. Basic Scatter Plots
-```python
-def plot_timing_amplitude_scatter(self, color_by='chronological'):
-    """
-    Scatter plot of (Δt, v) pairs.
-    
-    Parameters
-    ----------
-    color_by : {'chronological', 'cluster', 'bar_position', 'density'}
-        How to color points
-    
-    Features:
-    - Marginal histograms
-    - Correlation coefficient overlay
-    - Confidence ellipse
-    - Grid lines at key subdivisions
-    """
-```
-
-#### 2. Vector Field Plot
-```python
-def plot_vector_field(self, normalize_length=True):
-    """
-    Vectors from origin to each (Δt, v) point.
-    
-    Shows magnitude and direction of hits.
-    Color-coded by chronological position or bar number.
-    """
-```
-
-#### 3. Phase Space Plots
-```python
-def plot_phase_space_timing(self, lag=1):
-    """Δt_n vs Δt_{n+1} trajectory"""
-    
-def plot_phase_space_amplitude(self, lag=1):
-    """v_n vs v_{n+1} trajectory"""
-    
-def plot_phase_space_combined(self, projection='pca'):
-    """4D → 2D projection of (Δt_n, v_n, Δt_{n+1}, v_{n+1})"""
-```
-
-#### 4. Complex Plane Visualization
-```python
-def plot_complex_plane(self, style='polar'):
-    """
-    Plot hits as complex numbers z = v·exp(i·2π·Δt/T)
-    
-    Styles:
-    - 'polar': Polar coordinate plot
-    - 'cartesian': Real vs imaginary
-    - 'magnitude_phase': Separate plots
-    """
-```
-
-#### 5. Heatmaps & 2D Histograms
-```python
-def plot_2d_histogram(self, bins=50):
-    """Density heatmap of (Δt, v) space"""
-    
-def plot_bar_heatmap(self):
-    """
-    Reshape into [bars × beats] and plot:
-    - Timing deviation heatmap
-    - Amplitude heatmap
-    - Combined representation
-    """
-```
-
-#### 6. Time Series Plots
-```python
-def plot_timing_evolution(self):
-    """Timing deviations over chronological time"""
-    
-def plot_amplitude_evolution(self):
-    """Amplitude over time"""
-    
-def plot_dual_timeseries(self):
-    """Both on same plot with dual y-axes"""
-```
-
-#### 7. Circular/Polar Plots
-```python
-def plot_circular_timing(self, beats_per_circle=4):
-    """
-    Benadon-style circular plot.
-    Time around circumference, amplitude as radius.
-    """
-```
-
-#### 8. Piano Roll with Microtiming
-```python
-def plot_piano_roll(self):
-    """
-    Traditional piano roll with:
-    - Horizontal bars showing note duration
-    - Color encoding amplitude
-    - X-position including microtiming deviation
-    - Grid lines for perfect quantization
-    """
-```
-
-#### 9. Statistical Distribution Plots
-```python
-def plot_marginal_distributions(self):
-    """Separate histograms + KDE for timing and amplitude"""
-    
-def plot_joint_distribution(self):
-    """2D KDE with contours"""
-```
-
-#### 10. Correlation & Covariance Plots
-```python
-def plot_correlation_ellipse(self, n_std=2):
-    """2σ confidence ellipse showing correlation structure"""
-    
-def plot_autocorrelation_functions(self, max_lag=20):
-    """ACF for timing, amplitude, and cross-correlation"""
-```
-
-#### 11. PCA & Dimensionality Reduction
-```python
-def plot_pca_projection(self, components=[0,1]):
-    """Hits projected onto principal components"""
-    
-def plot_pca_explained_variance(self):
-    """Scree plot"""
-    
-def plot_tsne(self, perplexity=30):
-    """t-SNE projection of hit vectors"""
-```
-
-#### 12. Clustering Visualizations
-```python
-def plot_cluster_scatter(self, cluster_labels):
-    """Scatter plot colored by cluster"""
-    
-def plot_cluster_profiles(self):
-    """Mean (Δt, v) for each cluster with error bars"""
-    
-def plot_cluster_evolution(self):
-    """Which clusters appear when in the performance"""
-```
-
-#### 13. Comparison Plots
-```python
-def plot_comparison_grid(self, multiple_files):
-    """Grid of same visualization type for multiple performances"""
-    
-def plot_deviation_from_quantized(self, quantized_version):
-    """Overlay human vs. perfect grid"""
-```
-
-#### 14. Animation Capabilities
-```python
-def animate_vector_accumulation(self, output_path):
-    """Show hits appearing one by one"""
-    
-def animate_phase_space_trajectory(self):
-    """Evolving trajectory through (Δt, v) space"""
-```
-
-#### 15. Statistical Test Visualizations
-```python
-def plot_significance_tests(self):
-    """
-    - Bootstrap confidence intervals
-    - Permutation test results
-    - Comparison to null hypothesis (random/quantized)
-    """
-```
-
-#### 16. Composite Dashboard
-```python
-def create_analysis_dashboard(self, output_path):
-    """
-    Multi-panel figure with:
-    - Waveform + onsets
-    - (Δt, v) scatter
-    - Phase space plots
-    - Autocorrelation
-    - PCA projection
-    - Statistical summary table
-    
-    Layout optimized for papers/presentations.
-    """
-```
-
-**Output Formats**:
-- PNG (300 DPI for papers)
-- SVG (vector graphics for editing)
-- PDF (for LaTeX inclusion)
-- Interactive HTML (plotly for exploration)
-
-**Styling**:
-```python
-# Consistent theme across all plots
-PLOT_STYLE = {
-    'font_family': 'serif',
-    'font_size': 10,
-    'figure_dpi': 300,
-    'colormap_sequential': 'viridis',
-    'colormap_diverging': 'RdBu_r',
-    'colorblind_safe': True,
-    'grid_style': 'major',
-    'legend_location': 'best'
-}
-```
-
-## Main Analysis Pipeline
-
-**File**: `main_analysis.py`
-
-**Script**: `analyze_groove.py`
-
-```python
-"""
-Main analysis pipeline for processing drum performances.
-
-Usage:
-    python analyze_groove.py --input drum.wav --tempo 120 --output results/
-    python analyze_groove.py --batch folder/*.wav --tempo-file tempos.json
-"""
-```
-
-**Workflow**:
-1. Load audio file(s)
-2. Detect onsets
-3. Quantize to grid
-4. Create vector representations
-5. Run all analyses
-6. Generate all visualizations
-7. Export comprehensive report
-8. Save all intermediate data
-
-**Configuration File**: `config.yaml`
-```yaml
-onset_detection:
-  backend: librosa
-  hop_length: 256
-  threshold: 0.5
-
-quantization:
-  grid_subdivision: 16
-  timing_units: ms
-  amplitude_normalization: minmax
-
-analysis:
-  run_pca: true
-  run_clustering: true
-  n_clusters: [3, 4, 5]  # Try multiple
-  template_matching: true
-  
-visualization:
-  generate_all: true
-  output_format: [png, svg, pdf]
-  figure_dpi: 300
-  colorblind_safe: true
-  
-output:
-  save_intermediate: true
-  export_formats: [csv, json, hdf5]
-```
-
-## Validation & Testing
-
-### Synthetic Test Cases
-
-Create synthetic drum performances to validate the system:
-
-```python
-def generate_synthetic_groove(pattern_type, num_bars=8):
-    """
-    Generate test cases:
-    - 'perfect': Quantized grid, uniform velocity
-    - 'swing': Systematic late 16th notes
-    - 'rushed': Progressively early timing
-    - 'dragged': Progressively late timing
-    - 'accent': Loud on downbeats
-    - 'random': Random deviations
-    """
-```
-
-**Tests**:
-1. Perfect grid → deviations should be ~0
-2. Swing pattern → should detect characteristic timing ratio
-3. Known correlation → recovered in analysis
-4. PCA on uniform → should show minimal variance
-
-### Statistical Validation
-
-```python
-def validate_against_null_hypothesis():
-    """
-    Compare real performance against:
-    - Quantized version (no timing deviation)
-    - Random deviations (white noise)
-    - Shuffled version (breaks temporal structure)
-    
-    Use permutation tests to assess if patterns are significant.
-    """
-```
-
-### Ground Truth Comparison
-
-```python
-def compare_to_manual_annotation(annotation_file):
-    """
-    Load manual onset annotations and compare:
-    - Detection accuracy (precision/recall)
-    - Timing error (RMS difference)
-    - Amplitude correlation
-    """
-```
-
-## Output Structure
+Does timing drive amplitude, or amplitude drive timing?
 
 ```
-results/
-├── raw_data/
-│   ├── audio_info.json
-│   ├── onsets.csv
-│   ├── quantized.csv
-│   └── detection_visual.png
-├── representations/
-│   ├── hit_matrix.npy
-│   ├── complex_sequence.npy
-│   ├── representations.h5
-│   └── vector_stats.json
-├── analysis/
-│   ├── statistics_summary.json
-│   ├── pca_results.json
-│   ├── cluster_assignments.csv
-│   ├── autocorrelation.csv
-│   └── pattern_matches.csv
-├── visualizations/
-│   ├── timing_amplitude_scatter.png
-│   ├── phase_space.png
-│   ├── complex_plane.png
-│   ├── pca_projection.png
-│   ├── cluster_visualization.png
-│   └── ... (all 15+ plot types)
-├── reports/
-│   ├── analysis_dashboard.pdf
-│   ├── full_report.html
-│   └── methodology.md
-└── metadata/
-    ├── config.yaml
-    ├── software_versions.json
-    └── processing_log.txt
+T(Δt → v) = I(v_{n+1}; Δt_n | v_n)
 ```
 
-## Dependencies
+If T(Δt → v) > T(v → Δt), timing "causes" amplitude changes. This could distinguish:
+- Reactive groove: respond to what you just played
+- Anticipatory groove: amplitude predicts upcoming timing
+
+### Comparison Strategy
+
+**BPM-agnostic comparison**: Since we normalize deviations by grid interval, all measurements are in "fraction of beat" — directly comparable across tempos.
+
+**Overlay approach**: Plot multiple songs' scatter plots on same axes. If a universal structure exists, it should emerge from the overlap.
+
+**Groove operator comparison**: Fit the 2×2 matrix A to each track. Plot eigenvalues on complex plane. Look for clustering by:
+- Genre
+- Era
+- Drummer
+- Instrument (hi-hat vs snare vs kick)
+
+---
+
+## Next Steps
+
+### Immediate
+1. **Implement groove operator fitting**: Linear regression for 2×2 matrix A
+2. **Add polynomial regression**: Test significance of quadratic/interaction terms
+3. **Beat-position profile**: Mean deviation at each position in bar (0-15)
+4. **Multi-track overlay**: Visualization comparing multiple songs
+
+### Research Direction
+1. Analyze 10-20 iconic drum recordings across genres
+2. Fit groove operator to each
+3. Map eigenvalues and look for clustering
+4. Test if the quadratic characteristic equation predicts perceived "feel"
+
+### Data Collection
+- Isolated drum tracks preferred (stems, multitrack recordings)
+- Full mixes work with `--highpass 600` for hi-hat isolation
+- Need known BPM for each track
+- 1-bar loops sufficient for initial analysis; longer for statistical power
+
+---
+
+## File Structure
 
 ```
-# requirements.txt
-numpy>=1.21.0
-scipy>=1.7.0
-librosa>=0.9.0
-madmom>=0.16.1  # Optional backend
-matplotlib>=3.4.0
-seaborn>=0.11.0
-plotly>=5.0.0  # Interactive plots
-scikit-learn>=1.0.0
-pandas>=1.3.0
-h5py>=3.0.0
-pyyaml>=5.4.0
+groove-detect/
+├── analyze_groove.py          # CLI entry point
+├── config.yaml                # Default configuration
+├── onset-detect.md            # Onset detection methodology whitepaper
+├── CLAUDE.md                  # This file
+├── groove_analyzer/
+│   ├── onset_detection.py     # 0.02ms precision onset detection
+│   ├── quantization.py        # Grid alignment + offset correction
+│   ├── vector_representation.py
+│   ├── pattern_analysis.py
+│   ├── visualization.py
+│   ├── pipeline.py            # Orchestration
+│   └── synthetic.py           # Test pattern generation
+├── logic_audio/               # Test audio files
+│   ├── click-128.L.wav        # Control: perfect metronome
+│   ├── hat-Q100-128.L.wav     # Control: quantized MIDI
+│   └── hat-128.L.wav          # Test: humanized MIDI
+└── results/                   # Analysis outputs
 ```
 
-## Code Quality Standards
-
-- **Type hints**: All functions fully annotated
-- **Docstrings**: NumPy style for all public methods
-- **Testing**: Unit tests for all analysis functions
-- **Logging**: Comprehensive logging of all processing steps
-- **Error handling**: Graceful failures with informative messages
-- **Performance**: Profile and optimize for large datasets
+---
 
 ## Usage Examples
 
-### Example 1: Single File Analysis
-```python
-from groove_analyzer import GrooveAnalyzer
-
-analyzer = GrooveAnalyzer(
-    audio_path='drum_performance.wav',
-    tempo_bpm=120,
-    grid_subdivision=16
-)
-
-analyzer.run_full_analysis(output_dir='results/')
-analyzer.generate_all_visualizations()
-analyzer.export_report(format='html')
+### Basic Analysis
+```bash
+python analyze_groove.py -i drums.wav -t 120 -o results/my_song/
 ```
 
-### Example 2: Batch Processing
-```python
-from groove_analyzer import BatchAnalyzer
-
-batch = BatchAnalyzer(config_file='config.yaml')
-batch.process_directory(
-    input_dir='recordings/',
-    tempo_file='tempos.json',
-    output_dir='batch_results/'
-)
-
-# Generate comparison plots
-batch.create_comparison_visualizations()
-batch.export_dataset(format='csv')  # For further analysis
+### With High-Pass Filter (for full mixes)
+```bash
+python analyze_groove.py -i full_mix.wav -t 95 --highpass 600 -o results/funk_track/
 ```
 
-### Example 3: Interactive Exploration
-```python
-from groove_analyzer import InteractiveExplorer
-
-explorer = InteractiveExplorer('results/representations.h5')
-explorer.launch_dashboard()  # Opens interactive plotly dashboard
-
-# Programmatic exploration
-hits = explorer.get_hit_matrix()
-print(f"Correlation: {explorer.timing_amplitude_correlation()}")
-explorer.plot_custom(x='timing', y='amplitude', color_by='cluster')
+### Synthetic Validation
+```bash
+python analyze_groove.py --synthetic swing --bars 16 -o results/synthetic_test/
 ```
 
-## Research Workflow Integration
+---
 
-### For Academic Paper
+## Key Insights for Continuation
 
-1. **Methods Section**:
-   - Auto-generated from `methodology.md`
-   - Includes all parameters and validation results
+1. **The scatter plot is the fundamental view** — each point is one hit in (timing, amplitude) space
 
-2. **Results Section**:
-   - Publication-ready figures from visualization engine
-   - Statistical tables from analysis module
-   - Significance tests from validation
+2. **Interval-based metrics are robust** — measuring beat-to-beat consistency avoids tempo mismatch issues
 
-3. **Reproducibility**:
-   - Complete configuration files
-   - Random seeds logged
-   - Software versions recorded
-   - Data export in standard formats
+3. **Global offset correction is essential** — recordings rarely start on grid; subtract median deviation
 
-### For Further Analysis
+4. **Sample characteristics matter** — different sounds have inherent attack variation (hi-hat: 0.76ms, click: 0.02ms)
 
-Export data for use in:
-- R (CSV export)
-- MATLAB (HDF5 export)
-- Python notebooks (NumPy arrays)
-- Statistical packages (JSON export)
+5. **The groove operator matrix may be the key** — eigenvalues could map "groove space" where genres cluster
 
-## Extension Points
+6. **Negative timing-amplitude correlation = funk push** — loud hits early is classic feel (JB: r=-0.28)
 
-The architecture supports easy extension:
+7. **Quadratic/interaction terms may capture nonlinear feel** — test whether Δt·v interaction is significant
 
-### Adding New Visualizations
-```python
-class GrooveVisualizer:
-    def plot_your_new_visualization(self, **kwargs):
-        """Add new visualization here"""
-        # Access self.hit_matrix, self.complex_sequence, etc.
-        pass
-```
+---
 
-### Adding New Analysis Methods
-```python
-class PatternAnalyzer:
-    def your_new_analysis(self):
-        """Add new analysis here"""
-        # Return results as dict for JSON export
-        pass
-```
+## The Ghost in the Machine
 
-### Custom Representations
-```python
-class GrooveVectorizer:
-    def create_custom_representation(self):
-        """Transform data in new ways"""
-        pass
-```
+We're searching for a mathematical structure that explains why grooves feel the way they do. Candidates:
 
-## Expected Deliverables
+1. **Eigenvalue signature**: Complex eigenvalues = bouncy, real = rigid
+2. **Damping ratio**: Underdamped = swinging, overdamped = behind
+3. **Correlation sign**: Negative = pushing, positive = laying back
+4. **Energy conservation**: Tight pocket = conserved, building intensity = injection
 
-After running the complete pipeline:
+The answer might be a combination — a multi-dimensional "groove fingerprint" that captures the coupled dynamics of timing and amplitude.
 
-1. ✅ Extracted timing-amplitude vectors from WAV files
-2. ✅ Multiple mathematical representations (matrix, complex, trajectory)
-3. ✅ 15+ visualization types exploring patterns from different angles
-4. ✅ Statistical analysis with significance testing
-5. ✅ Pattern detection and clustering results
-6. ✅ Comparison against null hypotheses
-7. ✅ Publication-ready figures (vector graphics)
-8. ✅ Comprehensive HTML dashboard for exploration
-9. ✅ Exported datasets for further analysis
-10. ✅ Complete methodology documentation
-
-## Success Metrics
-
-The system is successful if it:
-
-- Processes WAV files reliably across different recording qualities
-- Generates reproducible results (same input → same output)
-- Creates publication-quality visualizations
-- Detects known patterns in synthetic data
-- Produces statistically significant findings
-- Exports data in standard formats
-- Runs efficiently on typical drum recordings (< 5 minutes)
-- Provides clear documentation of all steps
-
-## Notes for Implementation
-
-1. Start with core pipeline: onset detection → quantization → vector creation
-2. Implement 3-5 key visualizations first to validate approach
-3. Add analysis methods incrementally
-4. Test with both synthetic and real data at each stage
-5. Build comprehensive visualization suite
-6. Polish for academic presentation
-
-This framework treats the vector representation as the central innovation and builds extensive tooling around it to explore what patterns emerge.
+Like Missingno emerging from the code, the groove signature is there in the data, waiting to be decoded.

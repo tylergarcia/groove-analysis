@@ -89,6 +89,12 @@ Examples:
         default=0.0,
         help='Time of first downbeat in seconds (default: 0)'
     )
+    parser.add_argument(
+        '--highpass',
+        type=float,
+        default=None,
+        help='High-pass filter cutoff in Hz (e.g., 600 to isolate hi-hat from kick)'
+    )
 
     # Synthetic options
     parser.add_argument(
@@ -154,6 +160,7 @@ Examples:
             tempo_bpm=args.tempo,
             grid_subdivision=args.subdivision,
             first_downbeat=args.first_downbeat,
+            highpass_freq=args.highpass,
             run_pca=not args.skip_pca,
             run_clustering=not args.skip_clustering,
             run_significance=not args.skip_significance,
